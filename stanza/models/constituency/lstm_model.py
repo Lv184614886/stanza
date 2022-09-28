@@ -70,6 +70,14 @@ class StackHistory(Enum):
     LSTM               = 1
     ATTN               = 2
 
+# NONE: just do the original default of 3 layers
+# LINEAR: learn a single linear mixing layer.  Seems to work best for N=4 for roberta-base
+# QUERY: learn a 768 dim vector, take the softmax, use that to mix the layers
+class BertMix(Enum):
+    NONE               = 1
+    LINEAR             = 2
+    QUERY              = 3
+
 # How to compose constituent children into new constituents
 # MAX is simply take the max value of the children
 # this is surprisingly effective
@@ -328,15 +336,20 @@ class LSTMModel(BaseModel, nn.Module):
             if bert_tokenizer is None:
                 raise ValueError("Cannot have a bert model without a tokenizer")
             self.bert_dim = self.bert_model.config.hidden_size
-            if args['bert_hidden_layers']:
+            if args['bert_mix'] == BertMix.NONE:
+                # an average of layers 2, 3, 4 will be used
+                # (for historic reasons)
+                pass
+            elif args['bert_mix'] == BertMix.LINEAR:
                 # The average will be offset by 1/N so that the default zeros
                 # repressents an average of the N layers
                 self.bert_layer_mix = nn.Linear(args['bert_hidden_layers'], 1, bias=False)
                 nn.init.zeros_(self.bert_layer_mix.weight)
+            elif args['bert_mix'] == BertMix.QUERY:
+                self.bert_layer_mix = nn.Linear(self.bert_dim, 1, bias=False)
+                nn.init.zeros_(self.bert_layer_mix.weight)
             else:
-                # an average of layers 2, 3, 4 will be used
-                # (for historic reasons)
-                self.bert_layer_mix = None
+                raise ValueError("Unhandled BertMix {}".format(args['bert_mix']))
             self.word_input_size = self.word_input_size + self.bert_dim
 
         self.partitioned_transformer_module = None
@@ -677,12 +690,24 @@ class LSTMModel(BaseModel, nn.Module):
             # we will take 1:-1 if we don't care about the endpoints
             bert_embeddings = extract_bert_embeddings(self.args['bert_model'], self.bert_tokenizer, self.bert_model, all_word_labels, device,
                                                       keep_endpoints=self.sentence_boundary_vectors is not SentenceBoundary.NONE,
-                                                      num_layers=self.bert_layer_mix.in_features if self.bert_layer_mix is not None else None)
-            if self.bert_layer_mix is not None:
+                                                      num_layers=self.args['bert_hidden_layers'] if self.bert_layer_mix is not None else None)
+            if self.args['bert_mix'] == BertMix.NONE:
+                pass
+            elif self.args['bert_mix'] == BertMix.LINEAR:
                 # add the average so that the default behavior is to
                 # take an average of the N layers, and anything else
                 # other than that needs to be learned
                 bert_embeddings = [self.bert_layer_mix(feature).squeeze(2) + feature.sum(axis=2) / self.bert_layer_mix.in_features for feature in bert_embeddings]
+            elif self.args['bert_mix'] == BertMix.QUERY:
+                mixed_bert_embeddings = []
+                for feature in bert_embeddings:
+                    weighted_feature = self.bert_layer_mix(feature.transpose(1, 2))
+                    weighted_feature = torch.softmax(weighted_feature, dim=1)
+                    weighted_feature = torch.matmul(feature, weighted_feature).squeeze(2)
+                    mixed_bert_embeddings.append(weighted_feature)
+                bert_embeddings = mixed_bert_embeddings
+            else:
+                raise ValueError("Unhandled BertMix {}".format(args['bert_mix']))
 
             all_word_inputs = [torch.cat((x, y), axis=1) for x, y in zip(all_word_inputs, bert_embeddings)]
 

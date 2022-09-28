@@ -135,7 +135,7 @@ from stanza import Pipeline
 from stanza.models.common import utils
 from stanza.models.constituency import retagging
 from stanza.models.constituency import trainer
-from stanza.models.constituency.lstm_model import ConstituencyComposition, SentenceBoundary, StackHistory
+from stanza.models.constituency.lstm_model import BertMix, ConstituencyComposition, SentenceBoundary, StackHistory
 from stanza.models.constituency.parse_transitions import TransitionScheme
 from stanza.models.constituency.utils import DEFAULT_LEARNING_EPS, DEFAULT_LEARNING_RATES, DEFAULT_MOMENTUM, DEFAULT_LEARNING_RHO, DEFAULT_WEIGHT_DECAY, NONLINEARITY, add_predict_output_args
 
@@ -163,7 +163,8 @@ def parse_args(args=None):
     parser.add_argument('--bert_model', type=str, default=None, help="Use an external bert model (requires the transformers package)")
     parser.add_argument('--no_bert_model', dest='bert_model', action="store_const", const=None, help="Don't use bert")
     parser.add_argument('--bert_hidden_layers', type=int, default=4, help="How many layers of hidden state to use from the transformer")
-    parser.add_argument('--bert_hidden_layers_original', action='store_const', const=None, dest='bert_hidden_layers', help='Use layers 2,3,4 of the Bert embedding')
+    parser.add_argument('--bert_mix', default=BertMix.LINEAR, type=lambda x: BertMix[x.upper()],
+                        help='How to mix multiple bert layers into one input.  {}'.format(", ".join(x.name for x in BertMix)))
 
     parser.add_argument('--tag_embedding_dim', type=int, default=20, help="Embedding size for a tag.  0 turns off the feature")
     # Smaller values also seem to work

@@ -30,7 +30,7 @@ from stanza.models.constituency import transition_sequence
 from stanza.models.constituency import tree_reader
 from stanza.models.constituency.base_model import SimpleModel, UNARY_LIMIT
 from stanza.models.constituency.dynamic_oracle import RepairType, oracle_inorder_error
-from stanza.models.constituency.lstm_model import LSTMModel, StackHistory
+from stanza.models.constituency.lstm_model import LSTMModel, StackHistory, BertMix
 from stanza.models.constituency.parse_transitions import TransitionScheme
 from stanza.models.constituency.parse_tree import Tree
 from stanza.models.constituency.utils import retag_trees, build_optimizer, build_scheduler
@@ -98,6 +98,13 @@ class Trainer:
         saved_args.update(update_args)
 
         model_type = params['model_type']
+
+        # TODO: no need to do this once the models have bert_hidden_layers in them
+        if 'bert_hidden_layers' not in saved_args:
+            saved_args['bert_hidden_layers'] = None
+        if 'bert_mix' not in saved_args:
+            saved_args['bert_mix'] = BertMix.NONE
+
         if model_type == 'LSTM':
             pt = load_pretrain(saved_args.get('wordvec_pretrain_file', None), foundation_cache)
             bert_model, bert_tokenizer = load_bert(saved_args.get('bert_model', None), foundation_cache)

@@ -210,6 +210,16 @@ class BaseModel(ABC):
                              for tree in trees]
         return self.initial_state_from_preterminals(preterminal_lists, gold_trees=trees)
 
+    def build_batch_from_states(self, batch_size, data_iterator):
+        state_batch = []
+        for _ in range(batch_size):
+            state = next(data_iterator, None)
+            if state is None:
+                break
+            state_batch.append(state)
+
+        return state_batch
+
     def build_batch_from_trees(self, batch_size, data_iterator):
         """
         Read from the data_iterator batch_size trees and turn them into new parsing states

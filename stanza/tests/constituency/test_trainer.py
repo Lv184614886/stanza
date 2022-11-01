@@ -258,26 +258,26 @@ class TestTrainer:
             args = self.run_train_test(wordvec_pretrain_file, tmpdirname, num_epochs=8, extra_args=args)
             each_name = os.path.join(args['save_dir'], 'each_%02d.pt')
 
-            word_input_sizes = defaultdict(list)
+            word_transform_sizes = defaultdict(list)
             for i in range(1, 9):
                 model_name = each_name % i
                 assert os.path.exists(model_name)
                 tr = trainer.Trainer.load(model_name, load_optimizer=True)
                 assert tr.epochs_trained == i
-                word_input_sizes[tr.model.word_input_size].append(i)
+                word_transform_sizes[tr.model.word_transform_size].append(i)
             if use_lattn:
                 # there should be three stages: no attn, pattn, pattn+lattn
-                assert len(word_input_sizes) == 3
-                word_input_keys = sorted(word_input_sizes.keys())
-                assert word_input_sizes[word_input_keys[0]] == [1, 2, 3, 4]
-                assert word_input_sizes[word_input_keys[1]] == [5, 6]
-                assert word_input_sizes[word_input_keys[2]] == [7, 8]
+                assert len(word_transform_sizes) == 3
+                word_input_keys = sorted(word_transform_sizes.keys())
+                assert word_transform_sizes[word_input_keys[0]] == [1, 2, 3, 4]
+                assert word_transform_sizes[word_input_keys[1]] == [5, 6]
+                assert word_transform_sizes[word_input_keys[2]] == [7, 8]
             else:
                 # with no lattn, there are two stages: no attn, pattn
-                assert len(word_input_sizes) == 2
-                word_input_keys = sorted(word_input_sizes.keys())
-                assert word_input_sizes[word_input_keys[0]] == [1, 2, 3, 4]
-                assert word_input_sizes[word_input_keys[1]] == [5, 6, 7, 8]
+                assert len(word_transform_sizes) == 2
+                word_input_keys = sorted(word_transform_sizes.keys())
+                assert word_transform_sizes[word_input_keys[0]] == [1, 2, 3, 4]
+                assert word_transform_sizes[word_input_keys[1]] == [5, 6, 7, 8]
 
     def test_multistage_lattn(self, wordvec_pretrain_file):
         """

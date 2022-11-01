@@ -339,6 +339,9 @@ class LSTMModel(BaseModel, nn.Module):
                 self.bert_layer_mix = None
             self.word_input_size = self.word_input_size + self.bert_dim
 
+        self.word_lstm = nn.LSTM(input_size=self.word_input_size, hidden_size=self.hidden_size, num_layers=self.num_lstm_layers, bidirectional=True, dropout=self.lstm_layer_dropout)
+
+        self.word_transform_size = self.hidden_size * 2
         self.partitioned_transformer_module = None
         self.pattn_d_model = 0
         if LSTMModel.uses_pattn(self.args):
@@ -357,49 +360,45 @@ class LSTMModel(BaseModel, nn.Module):
                 ff_dropout=self.args['pattn_relu_dropout'],
                 residual_dropout=self.args['pattn_residual_dropout'],
                 attention_dropout=self.args['pattn_attention_dropout'],
-                word_input_size=self.word_input_size,
+                word_input_size=self.hidden_size * 2,
                 bias=self.args['pattn_bias'],
                 morpho_emb_dropout=self.args['pattn_morpho_emb_dropout'],
                 timing=self.args['pattn_timing'],
                 encoder_max_len=self.args['pattn_encoder_max_len']
             )
-            self.word_input_size += self.pattn_d_model
+
+            self.word_transform_size += self.pattn_d_model
 
         self.label_attention_module = None
         if LSTMModel.uses_lattn(self.args):
-            if self.partitioned_transformer_module is None:
-                logger.error("Not using Labeled Attention, as the Partitioned Attention module is not used")
+            if self.partitioned_transformer_module is None and not self.args['lattn_combined_input']:
+                logger.warning("Switching to lattn_combined_input=True, as the partitioned transformer is not even active")
+                self.args['lattn_combined_input'] = True
+            if self.args['lattn_combined_input']:
+                self.lattn_d_input = self.word_transform_size
             else:
-                # TODO: think of a couple ways to use alternate inputs
-                # for example, could pass in the word inputs with a positional embedding
-                # that would also allow it to work in the case of no partitioned module
-                if self.args['lattn_combined_input']:
-                    self.lattn_d_input = self.word_input_size
-                else:
-                    self.lattn_d_input = self.pattn_d_model
-                self.label_attention_module = LabelAttentionModule(self.lattn_d_input,
-                                                                   self.args['lattn_d_input_proj'],
-                                                                   self.args['lattn_d_kv'],
-                                                                   self.args['lattn_d_kv'],
-                                                                   self.args['lattn_d_l'],
-                                                                   self.args['lattn_d_proj'],
-                                                                   self.args['lattn_combine_as_self'],
-                                                                   self.args['lattn_resdrop'],
-                                                                   self.args['lattn_q_as_matrix'],
-                                                                   self.args['lattn_residual_dropout'],
-                                                                   self.args['lattn_attention_dropout'],
-                                                                   self.pattn_d_model // 2,
-                                                                   self.args['lattn_d_ff'],
-                                                                   self.args['lattn_relu_dropout'],
-                                                                   self.args['lattn_partitioned'])
-                self.word_input_size = self.word_input_size + self.args['lattn_d_proj']*self.args['lattn_d_l']
-
-        self.word_lstm = nn.LSTM(input_size=self.word_input_size, hidden_size=self.hidden_size, num_layers=self.num_lstm_layers, bidirectional=True, dropout=self.lstm_layer_dropout)
+                self.lattn_d_input = self.pattn_d_model
+            self.label_attention_module = LabelAttentionModule(self.lattn_d_input,
+                                                               self.args['lattn_d_input_proj'],
+                                                               self.args['lattn_d_kv'],
+                                                               self.args['lattn_d_kv'],
+                                                               self.args['lattn_d_l'],
+                                                               self.args['lattn_d_proj'],
+                                                               self.args['lattn_combine_as_self'],
+                                                               self.args['lattn_resdrop'],
+                                                               self.args['lattn_q_as_matrix'],
+                                                               self.args['lattn_residual_dropout'],
+                                                               self.args['lattn_attention_dropout'],
+                                                               self.pattn_d_model // 2,
+                                                               self.args['lattn_d_ff'],
+                                                               self.args['lattn_relu_dropout'],
+                                                               self.args['lattn_partitioned'])
+            self.word_transform_size = self.word_transform_size + self.args['lattn_d_proj']*self.args['lattn_d_l']
 
         # after putting the word_delta_tag input through the word_lstm, we get back
         # hidden_size * 2 output with the front and back lstms concatenated.
         # this transforms it into hidden_size with the values mixed together
-        self.word_to_constituent = nn.Linear(self.hidden_size * 2, self.hidden_size * self.num_tree_lstm_layers)
+        self.word_to_constituent = nn.Linear(self.word_transform_size, self.hidden_size * self.num_tree_lstm_layers)
         initialize_linear(self.word_to_constituent, self.args['nonlinearity'], self.hidden_size * 2)
 
         self.transitions = sorted(list(transitions))
@@ -539,8 +538,9 @@ class LSTMModel(BaseModel, nn.Module):
                     raise ValueError("Unexpected other parameter name {}".format(name))
                 for idx in range(len(self.constituent_opens)):
                     my_parameter[idx].data.copy_(other_parameter.data)
-            elif name.startswith('word_lstm.weight_ih_l0'):
-                # bottom layer shape may have changed from adding a new pattn / lattn block
+            elif name.startswith('word_to_constituent'):
+                # transformation from word_lstm to constituent
+                # might have changed from adding a new pattn / lattn block
                 my_parameter = self.get_parameter(name)
                 # -1 so that it can be converted easier to a different parameter
                 copy_size = min(other_parameter.data.shape[-1], my_parameter.data.shape[-1])
@@ -686,19 +686,6 @@ class LSTMModel(BaseModel, nn.Module):
 
             all_word_inputs = [torch.cat((x, y), axis=1) for x, y in zip(all_word_inputs, bert_embeddings)]
 
-        # Extract partitioned representation
-        if self.partitioned_transformer_module is not None:
-            partitioned_embeddings = self.partitioned_transformer_module(None, all_word_inputs)
-            all_word_inputs = [torch.cat((x, y[:x.shape[0], :]), axis=1) for x, y in zip(all_word_inputs, partitioned_embeddings)]
-
-        # Extract Labeled Representation
-        if self.label_attention_module is not None:
-            if self.args['lattn_combined_input']:
-                labeled_representations = self.label_attention_module(all_word_inputs, tagged_word_lists)
-            else:
-                labeled_representations = self.label_attention_module(partitioned_embeddings, tagged_word_lists)
-            all_word_inputs = [torch.cat((x, y[:x.shape[0], :]), axis=1) for x, y in zip(all_word_inputs, labeled_representations)]
-
         all_word_inputs = [self.word_dropout(word_inputs) for word_inputs in all_word_inputs]
         packed_word_input = torch.nn.utils.rnn.pack_sequence(all_word_inputs, enforce_sorted=False)
         word_output, _ = self.word_lstm(packed_word_input)
@@ -707,12 +694,28 @@ class LSTMModel(BaseModel, nn.Module):
         word_output, word_output_lens = torch.nn.utils.rnn.pad_packed_sequence(word_output)
         # now sentence x batch x hidden_size
 
-        word_queues = []
-        for sentence_idx, tagged_words in enumerate(tagged_word_lists):
-            if self.sentence_boundary_vectors is not SentenceBoundary.NONE:
-                sentence_output = word_output[:len(tagged_words)+2, sentence_idx, :]
+        # Extract partitioned representation
+        if self.sentence_boundary_vectors is not SentenceBoundary.NONE:
+            sentence_outputs = [word_output[:len(tagged_words)+2, sentence_idx, :]
+                                for sentence_idx, tagged_words in enumerate(tagged_word_lists)]
+        else:
+            sentence_outputs = [word_output[:len(tagged_words), sentence_idx, :]
+                                for sentence_idx, tagged_words in enumerate(tagged_word_lists)]
+
+        if self.partitioned_transformer_module is not None:
+            partitioned_embeddings = self.partitioned_transformer_module(None, sentence_outputs)
+            sentence_outputs = [torch.cat((x, y[:x.shape[0], :]), axis=1) for x, y in zip(sentence_outputs, partitioned_embeddings)]
+
+        # Extract Labeled Representation
+        if self.label_attention_module is not None:
+            if self.args['lattn_combined_input']:
+                labeled_representations = self.label_attention_module(sentence_outputs, tagged_word_lists)
             else:
-                sentence_output = word_output[:len(tagged_words), sentence_idx, :]
+                labeled_representations = self.label_attention_module(partitioned_embeddings, tagged_word_lists)
+            sentence_outputs = [torch.cat((x, y[:x.shape[0], :]), axis=1) for x, y in zip(sentence_outputs, labeled_representations)]
+
+        word_queues = []
+        for sentence_output, tagged_words in zip(sentence_outputs, tagged_word_lists):
             sentence_output = self.word_to_constituent(sentence_output)
             sentence_output = self.nonlinearity(sentence_output)
             # TODO: this makes it so constituents downstream are

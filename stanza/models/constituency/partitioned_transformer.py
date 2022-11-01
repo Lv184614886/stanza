@@ -245,18 +245,8 @@ class PartitionedTransformerModule(nn.Module):
                  activation=PartitionedReLU()
     ):
         super().__init__()
-        self.project_pretrained = nn.Linear(
-            word_input_size, d_model // 2, bias=bias
-        )
+        self.project_in = PartitionedLinear(word_input_size, d_model, bias=bias)
 
-        self.pattention_morpho_emb_dropout = FeatureDropout(morpho_emb_dropout)
-        if timing == 'sin':
-            self.add_timing = ConcatSinusoidalEncoding(d_model=d_model // 2, max_len=encoder_max_len)
-        elif timing == 'learned':
-            self.add_timing = ConcatPositionalEncoding(d_model=d_model // 2, max_len=encoder_max_len)
-        else:
-            raise ValueError("Unhandled timing type: %s" % timing)
-        self.transformer_input_norm = nn.LayerNorm(d_model)
         self.pattn_encoder = PartitionedTransformerEncoder(
             n_layers,
             d_model=d_model,
@@ -296,11 +286,9 @@ class PartitionedTransformerModule(nn.Module):
         )
 
         # Project the pretrained embedding onto the desired dimension
-        extra_content_annotations = self.project_pretrained(padded_embeddings)
+        encoder_in = self.project_in(padded_embeddings)
+        encoder_in = torch.cat(encoder_in, -1)
 
-        # Add positional information through the table
-        encoder_in = self.add_timing(self.pattention_morpho_emb_dropout(extra_content_annotations))
-        encoder_in = self.transformer_input_norm(encoder_in)
         # Put the partitioned input through the partitioned attention
         annotations = self.pattn_encoder(encoder_in, valid_token_mask)
 

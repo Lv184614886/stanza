@@ -393,7 +393,7 @@ class LSTMModel(BaseModel, nn.Module):
                                                                self.args['lattn_d_ff'],
                                                                self.args['lattn_relu_dropout'],
                                                                self.args['lattn_partitioned'])
-            self.word_transform_size = self.word_transform_size + self.args['lattn_d_proj']*self.args['lattn_d_l']
+            self.word_transform_size = self.args['lattn_d_proj']*self.args['lattn_d_l']
 
         # after putting the word_delta_tag input through the word_lstm, we get back
         # hidden_size * 2 output with the front and back lstms concatenated.
@@ -712,7 +712,7 @@ class LSTMModel(BaseModel, nn.Module):
                 labeled_representations = self.label_attention_module(sentence_outputs, tagged_word_lists)
             else:
                 labeled_representations = self.label_attention_module(partitioned_embeddings, tagged_word_lists)
-            sentence_outputs = [torch.cat((x, y[:x.shape[0], :]), axis=1) for x, y in zip(sentence_outputs, labeled_representations)]
+            sentence_outputs = [y[:x.shape[0], :] for x, y in zip(sentence_outputs, labeled_representations)]
 
         word_queues = []
         for sentence_output, tagged_words in zip(sentence_outputs, tagged_word_lists):

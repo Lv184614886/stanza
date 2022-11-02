@@ -34,6 +34,7 @@ import random
 
 import torch
 import torch.nn as nn
+from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from torch.nn.utils.rnn import pack_padded_sequence
 
 from stanza.models.common.bert_embedding import extract_bert_embeddings
@@ -342,6 +343,10 @@ class LSTMModel(BaseModel, nn.Module):
         self.word_lstm = nn.LSTM(input_size=self.word_input_size, hidden_size=self.hidden_size, num_layers=self.num_lstm_layers, bidirectional=True, dropout=self.lstm_layer_dropout)
 
         self.word_transform_size = self.hidden_size * 2
+
+        encoder_layers = TransformerEncoderLayer(self.hidden_size * 2, 2, self.hidden_size * 2, 0.1, batch_first=True)
+        self.transformer_encoder = TransformerEncoder(encoder_layers, 1)
+
         self.partitioned_transformer_module = None
         self.pattn_d_model = 0
         if LSTMModel.uses_pattn(self.args):
@@ -701,6 +706,16 @@ class LSTMModel(BaseModel, nn.Module):
         else:
             sentence_outputs = [word_output[:len(tagged_words), sentence_idx, :]
                                 for sentence_idx, tagged_words in enumerate(tagged_word_lists)]
+
+        if self.transformer_encoder is not None:
+            sentence_input = torch.zeros(len(sentence_outputs), max(len(x) for x in sentence_outputs), self.hidden_size * 2, device=device)
+            sentence_mask = torch.zeros(len(sentence_outputs), max(len(x) for x in sentence_outputs), device=device, dtype=torch.bool)
+            for sentence_idx, sentence_output in enumerate(sentence_outputs):
+                sentence_input[sentence_idx, :sentence_output.shape[0], :] = sentence_output
+                sentence_mask[sentence_idx, sentence_output.shape[0]:] = 1
+            transformed_sentence_outputs = self.transformer_encoder(sentence_input, src_key_padding_mask=sentence_mask)
+            new_sentence_outputs = [x + y[:x.shape[0], :] for x, y in zip(sentence_outputs, transformed_sentence_outputs)]
+            sentence_outputs = new_sentence_outputs
 
         if self.partitioned_transformer_module is not None:
             partitioned_embeddings = self.partitioned_transformer_module(None, sentence_outputs)

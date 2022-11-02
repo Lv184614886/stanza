@@ -367,7 +367,7 @@ class LSTMModel(BaseModel, nn.Module):
                 encoder_max_len=self.args['pattn_encoder_max_len']
             )
 
-            self.word_transform_size += self.pattn_d_model
+            self.word_transform_size = self.pattn_d_model
 
         self.label_attention_module = None
         if LSTMModel.uses_lattn(self.args):
@@ -704,7 +704,7 @@ class LSTMModel(BaseModel, nn.Module):
 
         if self.partitioned_transformer_module is not None:
             partitioned_embeddings = self.partitioned_transformer_module(None, sentence_outputs)
-            sentence_outputs = [torch.cat((x, y[:x.shape[0], :]), axis=1) for x, y in zip(sentence_outputs, partitioned_embeddings)]
+            sentence_outputs = [y[:x.shape[0], :] for x, y in zip(sentence_outputs, partitioned_embeddings)]
 
         # Extract Labeled Representation
         if self.label_attention_module is not None:

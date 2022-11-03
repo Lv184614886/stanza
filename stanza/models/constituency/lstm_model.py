@@ -344,7 +344,7 @@ class LSTMModel(BaseModel, nn.Module):
 
         self.word_transform_size = self.hidden_size * 2
 
-        encoder_layers = TransformerEncoderLayer(self.hidden_size * 2, 2, self.hidden_size * 2, 0.1, batch_first=True)
+        encoder_layers = TransformerEncoderLayer(self.hidden_size * 2, 8, self.hidden_size * 2, 0.1, batch_first=True)
         self.transformer_encoder = TransformerEncoder(encoder_layers, 1)
 
         self.partitioned_transformer_module = None

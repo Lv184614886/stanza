@@ -38,6 +38,11 @@ class TransitionScheme(Enum):
     #   0.8205
     IN_ORDER           = 4
 
+    # in order, with unaries after preterminals represented as a single
+    # transition after the preterminal
+    # and unaries elsewhere tied to the rest of the constituent
+    IN_ORDER_COMPOUND  = 5
+
 class State(namedtuple('State', ['word_queue', 'transitions', 'constituents', 'gold_tree', 'gold_sequence',
                                  'sentence_length', 'num_opens', 'word_position', 'score'])):
     """
@@ -331,6 +336,9 @@ class Dummy():
     def __init__(self, label):
         self.label = label
 
+    def is_preterminal(self):
+        return False
+
     def __str__(self):
         return "Dummy({})".format(self.label)
 
@@ -407,6 +415,11 @@ class OpenConstituent(Transition):
             if isinstance(model.get_top_transition(state.transitions), OpenConstituent):
                 # consecutive Opens don't make sense in the context of in-order
                 return False
+            if model.transition_scheme() == TransitionScheme.IN_ORDER_COMPOUND:
+                # if compound unary opens are used
+                # can always open as long as the word queue isn't empty
+                # if the word queue is empty, only close is allowed
+                return not state.empty_word_queue()
             # one other restriction - we assume all parse trees
             # start with (ROOT (first_real_con ...))
             # therefore ROOT can only occur via Open after everything
@@ -455,6 +468,110 @@ class OpenConstituent(Transition):
     def __hash__(self):
         return hash(self.label)
 
+class PreterminalUnary(Transition):
+    """
+    Can only be applied to a preterminal
+
+    Turns the preterminal into a unary chain
+    """
+    def __init__(self, *label):
+        self.label = tuple(label)
+        self.top_label = self.label[0]
+
+    def update_state(self, state, model):
+        """
+        Apply potentially multiple unary transitions to the same preterminal
+
+        Only applies to preterminals
+        It reuses the CloseConstituent machinery
+        """
+        # only the top constituent is meaningful here
+        constituents = state.constituents
+        children = [constituents.value]
+        constituents = constituents.pop()
+        # unlike with CloseConstituent, our label is not on the stack.
+        # it is just our label
+        label = self.label
+
+        # ... but we do reuse CloseConstituent's update
+        return state.word_position, constituents, (label, children), CloseConstituent
+
+    def is_legal(self, state, model):
+        """
+        Legal if & only if the previous item is a preterminal
+        """
+        tree = model.get_top_constituent(state.constituents)
+        if tree is None:
+            return False
+        return tree.is_preterminal()
+
+    def short_name(self):
+        return "PTUnary"
+
+    def __repr__(self):
+        return "PreterminalUnary(%s)" % ",".join(self.label)
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if not isinstance(other, PreterminalUnary):
+            return False
+        return other.label == self.label
+
+    def __hash__(self):
+        return hash((28, self.label))
+
+class Finalize(Transition):
+    """
+    Specifically applies at the end of a parse sequence to add a ROOT
+
+    Seemed like the simplest way to remove ROOT from the
+    in_order_compound transitions while still using the mechanism of
+    the transitions to build the parse tree
+    """
+    def __init__(self, *label):
+        self.label = tuple(label)
+
+    def update_state(self, state, model):
+        """
+        Apply potentially multiple unary transitions to the same preterminal
+
+        Only applies to preterminals
+        It reuses the CloseConstituent machinery
+        """
+        # only the top constituent is meaningful here
+        constituents = state.constituents
+        children = [constituents.value]
+        constituents = constituents.pop()
+        # unlike with CloseConstituent, our label is not on the stack.
+        # it is just our label
+        label = self.label
+
+        # ... but we do reuse CloseConstituent's update
+        return state.word_position, constituents, (label, children), CloseConstituent
+
+    def is_legal(self, state, model):
+        """
+        Legal if & only if there is one tree, no more words, and no ROOT yet
+        """
+        return state.empty_word_queue() and state.has_one_constituent() and not state.finished(model)
+
+    def short_name(self):
+        return "Finalize"
+
+    def __repr__(self):
+        return "Finalize(%s)" % ",".join(self.label)
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if not isinstance(other, Finalize):
+            return False
+        return other.label == self.label
+
+    def __hash__(self):
+        return hash((53, self.label))
+
 class CloseConstituent(Transition):
     def delta_opens(self):
         return -1
@@ -499,6 +616,7 @@ class CloseConstituent(Transition):
     def is_legal(self, state, model):
         """
         Disallow if there is no Open on the stack yet
+
         in TOP_DOWN, if the previous transition was the Open (nothing built yet)
         in IN_ORDER, previous transition does not matter, except for one small corner case
         """
@@ -521,7 +639,7 @@ class CloseConstituent(Transition):
                 # under the ROOT open if unary transitions are not possible
                 if state.num_opens == 2 and not state.empty_word_queue():
                     return False
-        else:
+        elif model.transition_scheme() == TransitionScheme.IN_ORDER:
             if not isinstance(model.get_top_transition(state.transitions), OpenConstituent):
                 # we're not stuck in a loop of unaries
                 return True
@@ -538,6 +656,13 @@ class CloseConstituent(Transition):
                 #   option once there are no opens left will be an open
                 # this means we'll be stuck having to open again if we do close
                 # this node, so instead we make the Close illegal
+                return False
+        elif model.transition_scheme() == TransitionScheme.IN_ORDER_COMPOUND:
+            # the only restriction here is that we can't close
+            # immediately after an open
+            # internal unaries are handled by the opens being compound
+            # preterminal unaries are handled with PreterminalUnary
+            if isinstance(model.get_top_transition(state.transitions), OpenConstituent):
                 return False
         return True
 

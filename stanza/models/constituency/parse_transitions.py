@@ -43,6 +43,9 @@ class TransitionScheme(Enum):
     # and unaries elsewhere tied to the rest of the constituent
     IN_ORDER_COMPOUND  = 5
 
+    # in order, with CompoundUnary on both preterminals and internal nodes
+    IN_ORDER_UNARY     = 6
+
 class State(namedtuple('State', ['word_queue', 'transitions', 'constituents', 'gold_tree', 'gold_sequence',
                                  'sentence_length', 'num_opens', 'word_position', 'score'])):
     """
@@ -270,7 +273,6 @@ class Shift(Transition):
         return hash(37)
 
 class CompoundUnary(Transition):
-    # TODO: run experiments to see if this is actually useful
     def __init__(self, *label):
         # the FIRST label will be the top of the tree
         # so CompoundUnary that results in root will have root as labels[0], for example
@@ -302,6 +304,9 @@ class CompoundUnary(Transition):
         # and don't stack CompoundUnary transitions
         if isinstance(model.get_top_transition(state.transitions), (CompoundUnary, OpenConstituent)):
             return False
+        if model.transition_scheme() is not TransitionScheme.TOP_DOWN_UNARY:
+            return True
+
         is_root = self.label[0] in model.get_root_labels()
         if not state.empty_word_queue() or not state.has_one_constituent():
             return not is_root
@@ -415,8 +420,10 @@ class OpenConstituent(Transition):
             if isinstance(model.get_top_transition(state.transitions), OpenConstituent):
                 # consecutive Opens don't make sense in the context of in-order
                 return False
-            if model.transition_scheme() == TransitionScheme.IN_ORDER_COMPOUND:
+            if (model.transition_scheme() is TransitionScheme.IN_ORDER_UNARY or
+                model.transition_scheme() is TransitionScheme.IN_ORDER_COMPOUND):
                 # if compound unary opens are used
+                # or the unary transitions are via CompoundUnary
                 # can always open as long as the word queue isn't empty
                 # if the word queue is empty, only close is allowed
                 return not state.empty_word_queue()
@@ -643,6 +650,13 @@ class CloseConstituent(Transition):
             if not isinstance(model.get_top_transition(state.transitions), OpenConstituent):
                 # we're not stuck in a loop of unaries
                 return True
+            # in both of these cases, we cannot do open/close
+            # IN_ORDER_COMPOUND will use compound opens and preterminal unaries
+            # IN_ORDER_UNARY will use compound unaries
+            if (isinstance(model.get_top_transition(state.transitions), OpenConstituent) and
+                (model.transition_scheme() is TransitionScheme.IN_ORDER_UNARY or
+                 model.transition_scheme() is TransitionScheme.IN_ORDER_COMPOUND)):
+                return False
             if state.num_opens > 1 or state.empty_word_queue():
                 # in either of these cases, the corresponding Open should be eliminated
                 # if we're stuck in a loop of unaries

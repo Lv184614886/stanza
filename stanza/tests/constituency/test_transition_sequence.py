@@ -67,6 +67,9 @@ def test_in_order():
 def test_in_order_compound():
     check_reproduce_tree(transition_scheme=TransitionScheme.IN_ORDER_COMPOUND)
 
+def test_in_order_unary():
+    check_reproduce_tree(transition_scheme=TransitionScheme.IN_ORDER_UNARY)
+
 def test_all_transitions():
     text="((SBARQ (WHNP (WP Who)) (SQ (VP (VBZ sits) (PP (IN in) (NP (DT this) (NN seat))))) (. ?)))"
     trees = tree_reader.read_trees(text)

@@ -79,12 +79,8 @@ def yield_in_order_sequence(tree):
 
 
 
-def yield_in_order_compound_sequence(tree):
+def yield_in_order_compound_sequence(tree, transition_scheme):
     def helper(tree):
-        if tree.is_preterminal():
-            yield Shift()
-            return
-
         if tree.is_leaf():
             return
 
@@ -95,14 +91,21 @@ def yield_in_order_compound_sequence(tree):
 
         if tree.is_preterminal():
             yield Shift()
-            yield PreterminalUnary(*labels)
+            if len(labels) > 0:
+                if transition_scheme is TransitionScheme.IN_ORDER_UNARY:
+                    yield CompoundUnary(*labels)
+                else:
+                    yield PreterminalUnary(*labels)
             return
 
         for transition in helper(tree.children[0]):
             yield transition
 
-        labels.append(tree.label)
-        yield OpenConstituent(*labels)
+        if transition_scheme is TransitionScheme.IN_ORDER_UNARY:
+            yield OpenConstituent(tree.label)
+        else:
+            labels.append(tree.label)
+            yield OpenConstituent(*labels)
 
         for child in tree.children[1:]:
             for transition in helper(child):
@@ -110,10 +113,13 @@ def yield_in_order_compound_sequence(tree):
 
         yield CloseConstituent()
 
+        if transition_scheme is TransitionScheme.IN_ORDER_UNARY and len(labels) > 0:
+            yield CompoundUnary(*labels)
+
     if len(tree.children) == 0:
-        raise ValueError("Cannot build IN_ORDER_COMPOUND on an empty tree")
+        raise ValueError("Cannot build {} on an empty tree".format(transition_scheme))
     if len(tree.children) != 1:
-        raise ValueError("Cannot build IN_ORDER_COMPOUND with a tree that has two top level nodes: %s" % tree)
+        raise ValueError("Cannot build {} with a tree that has two top level nodes: {}".format(transition_scheme, tree))
 
     for t in helper(tree.children[0]):
         yield t
@@ -126,8 +132,9 @@ def build_sequence(tree, transition_scheme=TransitionScheme.TOP_DOWN_UNARY):
     """
     if transition_scheme is TransitionScheme.IN_ORDER:
         return list(yield_in_order_sequence(tree))
-    elif transition_scheme is TransitionScheme.IN_ORDER_COMPOUND:
-        return list(yield_in_order_compound_sequence(tree))
+    elif (transition_scheme is TransitionScheme.IN_ORDER_COMPOUND or
+          transition_scheme is TransitionScheme.IN_ORDER_UNARY):
+        return list(yield_in_order_compound_sequence(tree, transition_scheme))
     else:
         return list(yield_top_down_sequence(tree, transition_scheme))
 

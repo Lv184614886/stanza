@@ -119,7 +119,7 @@ def test_unary(model=None):
 
 def test_unary_requires_root(model=None):
     if model is None:
-        model = SimpleModel()
+        model = SimpleModel(transition_scheme=TransitionScheme.TOP_DOWN_UNARY)
     state = build_initial_state(model)[0]
 
     open_transition = parse_transitions.OpenConstituent("S")
